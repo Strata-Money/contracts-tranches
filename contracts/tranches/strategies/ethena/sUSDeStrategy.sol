@@ -125,6 +125,9 @@ contract sUSDeStrategy is IStrategy, Strategy {
         if (token == address(USDe)) {
             // tokenAmount is in USDe, convert to sUSDe shares (Rounding.Floor/in favor of protocol) and trigger unstaking
             uint256 shares = sUSDe.convertToShares(tokenAmount);
+            if (shares == 0) {
+                revert ZeroAmount();
+            }
             unstakeCooldown.transfer(sUSDe, address(cdo), receiver, shares);
             return;
         }
