@@ -8,6 +8,8 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IErrors} from "../../interfaces/IErrors.sol";
 import {IStrataCDO} from "../../interfaces/IStrataCDO.sol";
 import {IERC20Cooldown} from "../../interfaces/cooldown/ICooldown.sol";
+import {IDistributor} from "../../interfaces/IDistributor.sol";
+import {ISwapContract} from "../../interfaces/ISwapContract.sol";
 import {Strategy} from "../../Strategy.sol";
 
 contract SteakhouseUSDC is Strategy {
@@ -16,6 +18,12 @@ contract SteakhouseUSDC is Strategy {
 
     IERC20Cooldown public erc20Cooldown;
 
+    /// @notice Merkl distributor contract for claiming rewards
+    IDistributor public distributor;
+
+    /// @notice SwapContract for swapping rewards to USDC
+    ISwapContract public swapContract;
+
     /**
      * configuration
      */
@@ -23,6 +31,9 @@ contract SteakhouseUSDC is Strategy {
     uint256 public steakhouseUSDCooldownSrt;
 
     event CooldownsChanged(uint256 jrt, uint256 srt);
+    event RewardsClaimed(address indexed rewardToken, uint256 rewardAmount, uint256 usdcReceived);
+    event DistributorUpdated(address indexed distributor);
+    event SwapContractUpdated(address indexed swapContract);
 
     constructor(IERC4626 steakhouseUSD_) {
         steakhouseUSD = steakhouseUSD_;
@@ -159,7 +170,7 @@ contract SteakhouseUSDC is Strategy {
     {
         if (token == address(steakhouseUSD)) {
             return rounding == Math.Rounding.Floor
-                ? steakhouseUSD.previewRedeem(tokenAmount) // aka convertToAssets(tokenAmount)
+                ? steakhouseUSD.previewRedeem(tokenAmount)  // aka convertToAssets(tokenAmount)
                 : steakhouseUSD.previewMint(tokenAmount);
         }
         if (token == address(USDC)) {
@@ -185,7 +196,7 @@ contract SteakhouseUSDC is Strategy {
     {
         if (token == address(steakhouseUSD)) {
             return rounding == Math.Rounding.Floor
-                ? steakhouseUSD.previewDeposit(baseAssets) // aka convertToShares(baseAssets)
+                ? steakhouseUSD.previewDeposit(baseAssets)  // aka convertToShares(baseAssets)
                 : steakhouseUSD.previewWithdraw(baseAssets);
         }
         if (token == address(USDC)) {
@@ -221,5 +232,93 @@ contract SteakhouseUSDC is Strategy {
         bool isDisabled = steakhouseUSDCooldownJrt_ == 0 && steakhouseUSDCooldownSrt_ == 0;
         erc20Cooldown.setCooldownDisabled(steakhouseUSD, isDisabled);
         emit CooldownsChanged(steakhouseUSDCooldownJrt_, steakhouseUSDCooldownSrt_);
+    }
+
+    /**
+     * @notice Sets the Merkl distributor contract address
+     * @param distributor_ The address of the Merkl distributor contract
+     */
+    function setDistributor(IDistributor distributor_) external onlyRole(UPDATER_STRAT_CONFIG_ROLE) {
+        distributor = distributor_;
+        emit DistributorUpdated(address(distributor_));
+    }
+
+    /**
+     * @notice Sets the SwapContract address for swapping rewards
+     * @param swapContract_ The address of the SwapContract
+     */
+    function setSwapContract(ISwapContract swapContract_) external onlyRole(UPDATER_STRAT_CONFIG_ROLE) {
+        swapContract = swapContract_;
+        emit SwapContractUpdated(address(swapContract_));
+    }
+
+    /**
+     * @notice Claims rewards from the Merkl distributor and swaps them to USDC
+     * @dev This function claims rewards for this contract and swaps them to USDC using the SwapContract
+     * @param tokens Array of reward token addresses to claim
+     * @param amounts Array of cumulative amounts earned (from Merkle tree)
+     * @param proofs Array of Merkle proofs for each claim
+     * @param poolKeysData Array of ABI-encoded PoolKey structs for swapping each reward token to USDC
+     * @param zeroForOnes Array of swap directions for each token
+     * @param minAmountsOut Array of minimum USDC amounts expected from each swap (slippage protection)
+     * @param deadline Timestamp after which the swaps will revert
+     * @return totalUsdcReceived Total USDC received from all swaps
+     */
+    function claimRewards(
+        address[] calldata tokens,
+        uint256[] calldata amounts,
+        bytes32[][] calldata proofs,
+        bytes[] calldata poolKeysData,
+        bool[] calldata zeroForOnes,
+        uint128[] calldata minAmountsOut,
+        uint256 deadline
+    ) external onlyRole(UPDATER_STRAT_CONFIG_ROLE) returns (uint256 totalUsdcReceived) {
+        uint256 length = tokens.length;
+        require(
+            length == amounts.length && length == proofs.length && length == poolKeysData.length
+                && length == zeroForOnes.length && length == minAmountsOut.length,
+            "Array length mismatch"
+        );
+        require(address(distributor) != address(0), "Distributor not set");
+        require(address(swapContract) != address(0), "SwapContract not set");
+
+        // Build the users array - all claims are for this contract
+        address[] memory users = new address[](length);
+        for (uint256 i = 0; i < length; i++) {
+            users[i] = address(this);
+        }
+
+        // Claim rewards from the distributor
+        distributor.claim(users, tokens, amounts, proofs);
+
+        // Swap each reward token to USDC
+        for (uint256 i = 0; i < length; i++) {
+            address rewardToken = tokens[i];
+
+            // Skip if the reward is already USDC
+            if (rewardToken == address(USDC)) {
+                uint256 usdcBalance = USDC.balanceOf(address(this));
+                totalUsdcReceived += usdcBalance;
+                emit RewardsClaimed(rewardToken, usdcBalance, usdcBalance);
+                continue;
+            }
+
+            // Get the balance of the reward token we just claimed
+            uint256 rewardBalance = IERC20(rewardToken).balanceOf(address(this));
+            if (rewardBalance == 0) continue;
+
+            // Approve the SwapContract to spend the reward tokens
+            SafeERC20.forceApprove(IERC20(rewardToken), address(swapContract), rewardBalance);
+
+            // Swap the reward token to USDC
+            uint256 usdcReceived = swapContract.swapWithEncodedKey(
+                poolKeysData[i], zeroForOnes[i], uint128(rewardBalance), minAmountsOut[i], deadline, bytes("")
+            );
+
+            totalUsdcReceived += usdcReceived;
+            emit RewardsClaimed(rewardToken, rewardBalance, usdcReceived);
+        }
+
+        return totalUsdcReceived;
     }
 }

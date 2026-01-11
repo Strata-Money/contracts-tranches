@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.28;
 
 import {UniversalRouter} from "@uniswap/universal-router/contracts/UniversalRouter.sol";
 import {Commands} from "@uniswap/universal-router/contracts/libraries/Commands.sol";
@@ -59,11 +59,7 @@ contract SwapContract {
         bytes[] memory params = new bytes[](3);
         params[0] = abi.encode(
             IV4Router.ExactInputSingleParams({
-                poolKey: key,
-                zeroForOne: true,
-                amountIn: amountIn,
-                amountOutMinimum: minAmountOut,
-                hookData: bytes("")
+                poolKey: key, zeroForOne: true, amountIn: amountIn, amountOutMinimum: minAmountOut, hookData: bytes("")
             })
         );
         params[1] = abi.encode(key.currency0, amountIn);
@@ -188,5 +184,26 @@ contract SwapContract {
         amountIn = maxAmountIn - inputBalance;
 
         return amountIn;
+    }
+
+    /// @notice Swap exact input tokens for output tokens with ABI-encoded PoolKey
+    /// @dev This function decodes the poolKeyData and calls the swap function
+    /// @param poolKeyData ABI-encoded PoolKey struct
+    /// @param zeroForOne Direction: true = token0 -> token1, false = token1 -> token0
+    /// @param amountIn Exact amount of input tokens to swap
+    /// @param minAmountOut Minimum amount of output tokens (slippage protection)
+    /// @param deadline Timestamp after which the transaction reverts
+    /// @param hookData Arbitrary data passed to the pool's hook
+    /// @return amountOut The amount of output tokens received
+    function swapWithEncodedKey(
+        bytes calldata poolKeyData,
+        bool zeroForOne,
+        uint128 amountIn,
+        uint128 minAmountOut,
+        uint256 deadline,
+        bytes calldata hookData
+    ) external returns (uint256 amountOut) {
+        PoolKey memory key = abi.decode(poolKeyData, (PoolKey));
+        return this.swap(key, zeroForOne, amountIn, minAmountOut, deadline, hookData);
     }
 }
