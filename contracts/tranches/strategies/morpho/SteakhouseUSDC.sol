@@ -88,7 +88,8 @@ contract SteakhouseUSDC is Strategy {
      * @notice Processes asset withdrawals for the CDO contract.
      * @dev This method is called by the CDO contract to handle asset withdrawals.
      *      If withdrawing steakhouseUSD shares, a cooldown period is applied based on the tranche type.
-     *      If withdrawing USDC, the steakhouseUSD shares are redeemed directly.
+     *      If withdrawing USDC, the steakhouseUSD shares are redeemed directly (no cooldown mechanism).
+     *      An overloaded version accepts a shouldSkipCooldown parameter to skip the cooldown for steakhouseUSD withdrawals.
      * @param tranche The address of the tranche withdrawing assets
      * @param token The address of the token to be withdrawn
      * @param tokenAmount The amount of tokens to be withdrawn (not used in this implementation)
@@ -105,14 +106,39 @@ contract SteakhouseUSDC is Strategy {
         address sender,
         address receiver
     ) external onlyCDO returns (uint256) {
+        return withdrawInner(tranche, token, tokenAmount, baseAssets, sender, receiver, false);
+    }
+
+    function withdraw(
+        address tranche,
+        address token,
+        uint256 tokenAmount,
+        uint256 baseAssets,
+        address sender,
+        address receiver,
+        bool shouldSkipCooldown
+    ) external onlyCDO returns (uint256) {
+        return withdrawInner(tranche, token, tokenAmount, baseAssets, sender, receiver, shouldSkipCooldown);
+    }
+
+    function withdrawInner(
+        address tranche,
+        address token,
+        uint256 tokenAmount,
+        uint256 baseAssets,
+        address sender,
+        address receiver,
+        bool shouldSkipCooldown
+    ) internal returns (uint256) {
         uint256 shares = steakhouseUSD.previewWithdraw(baseAssets);
         if (token == address(steakhouseUSD)) {
-            uint256 cooldownSeconds = cdo.isJrt(tranche) ? steakhouseUSDCooldownJrt : steakhouseUSDCooldownSrt;
+            uint256 cooldownSeconds =
+                shouldSkipCooldown ? 0 : (cdo.isJrt(tranche) ? steakhouseUSDCooldownJrt : steakhouseUSDCooldownSrt);
             erc20Cooldown.transfer(steakhouseUSD, sender, receiver, shares, cooldownSeconds);
             return shares;
         }
         if (token == address(USDC)) {
-            // Morpho allows direct withdrawal - no unstaking needed
+            // Morpho allows direct withdrawal - no cooldown needed
             steakhouseUSD.withdraw(baseAssets, receiver, address(this));
             return baseAssets;
         }
