@@ -30,10 +30,20 @@ contract MorphoStrategy is Strategy {
     uint256 public vaultCooldownJrt;
     uint256 public vaultCooldownSrt;
 
+    /**
+     * @notice Vesting configuration for reward deposits
+     * @dev VestedUSDC tracks the total amount of USDC deposited from rewards that is still vesting.
+     *      This amount decreases linearly over the vesting duration.
+     */
+    uint256 public vestedUSDC;
+    uint256 public vestingDuration;
+    uint256 public lastVestingUpdate;
+
     event CooldownsChanged(uint256 jrt, uint256 srt);
     event RewardsClaimed(address indexed rewardToken, uint256 rewardAmount, uint256 assetReceived);
     event DistributorUpdated(address indexed distributor);
     event SwapContractUpdated(address indexed swapContract);
+    event VestingDurationUpdated(uint256 newDuration);
 
     constructor(IERC4626 vault_) {
         vault = vault_;
@@ -51,6 +61,9 @@ contract MorphoStrategy is Strategy {
         erc20Cooldown = erc20Cooldown_;
 
         SafeERC20.forceApprove(vault, address(erc20Cooldown), type(uint256).max);
+
+        // Initialize vesting state
+        lastVestingUpdate = block.timestamp;
     }
 
     /**
@@ -169,6 +182,77 @@ contract MorphoStrategy is Strategy {
     }
 
     /**
+     * @notice Calculates the current unvested USDC amount
+     * @dev Returns the amount of USDC that is still vesting, decreasing linearly over time
+     * @return The amount of unvested USDC
+     */
+    function getUnvestedUSDC() public view returns (uint256) {
+        if (vestedUSDC == 0 || vestingDuration == 0) {
+            return 0;
+        }
+
+        uint256 elapsed = block.timestamp > lastVestingUpdate ? block.timestamp - lastVestingUpdate : 0;
+
+        if (elapsed >= vestingDuration) {
+            return 0; // Fully vested
+        }
+
+        // Linear vesting: unvested = vestedUSDC * (1 - elapsed / duration)
+        // Using: unvested = vestedUSDC * (vestingDuration - elapsed) / vestingDuration
+        return (vestedUSDC * (vestingDuration - elapsed)) / vestingDuration;
+    }
+
+    /**
+     * @notice Updates the vesting state by applying time decay
+     * @dev This should be called before modifying vestedUSDC to apply time-based decay.
+     *      When vesting occurs, the newly vested amount is transferred to the junior vault
+     *      so that users can withdraw their money back.
+     */
+    function _updateVesting() internal {
+        uint256 vestedUSDCBefore = vestedUSDC;
+
+        if (vestedUSDC > 0 && vestingDuration > 0 && lastVestingUpdate > 0) {
+            uint256 elapsed = block.timestamp > lastVestingUpdate ? block.timestamp - lastVestingUpdate : 0;
+
+            if (elapsed >= vestingDuration) {
+                // Fully vested, reset to zero
+                vestedUSDC = 0;
+            } else {
+                // Apply linear decay
+                vestedUSDC = (vestedUSDC * (vestingDuration - elapsed)) / vestingDuration;
+            }
+        }
+        lastVestingUpdate = block.timestamp;
+
+        // Calculate newly vested amount and transfer to junior vault
+        if (vestedUSDCBefore > vestedUSDC) {
+            uint256 newlyVested = vestedUSDCBefore - vestedUSDC;
+            _transferVestedToJuniorVault(newlyVested);
+        }
+    }
+
+    /**
+     * @notice Transfers newly vested assets to the junior vault
+     * @dev Uses USDC already in the strategy contract (from current reward claims after swapping).
+     *      Transfers assets directly to the vault to increase its total value without minting shares.
+     *      The vestedUSDC is kept as USDC in the strategy contract, not deposited to the vault.
+     *      If the junior vault is not yet configured, the transfer is skipped.
+     * @param newlyVested The amount of newly vested base assets to transfer
+     */
+    function _transferVestedToJuniorVault(uint256 newlyVested) internal {
+        if (newlyVested == 0) return;
+
+        // Skip if junior vault is not configured yet
+        if (address(cdo.jrtVault()) == address(0)) {
+            return;
+        }
+
+        // The USDC should already be in the strategy contract from reward claims
+        // Transfer directly to the vault to increase its total value without minting shares
+        SafeERC20.safeTransfer(asset, address(cdo.jrtVault()), newlyVested);
+    }
+
+    /**
      * @notice Calculates the total assets managed by this strategy
      * @dev This function returns the current value of the strategy's assets in the base asset.
      * @return baseAssets The total amount of base asset managed by this strategy
@@ -176,6 +260,19 @@ contract MorphoStrategy is Strategy {
     function totalAssets() external view returns (uint256 baseAssets) {
         uint256 shares = vault.balanceOf(address(this));
         baseAssets = vault.previewRedeem(shares);
+
+        // Add USDC balance in strategy contract (where vestedUSDC is held)
+        uint256 usdcBalance = asset.balanceOf(address(this));
+        baseAssets += usdcBalance;
+
+        // Subtract unvested USDC from rewards
+        uint256 unvested = getUnvestedUSDC();
+        if (baseAssets > unvested) {
+            baseAssets -= unvested;
+        } else {
+            baseAssets = 0;
+        }
+
         return baseAssets;
     }
 
@@ -279,8 +376,10 @@ contract MorphoStrategy is Strategy {
     }
 
     /**
-     * @notice Claims rewards from the Merkl distributor and swaps them to the base asset
-     * @dev This function claims rewards for this contract and swaps them to the base asset using the SwapContract
+     * @notice Claims rewards from the Merkl distributor, swaps them to the base asset, and deposits to Junior Vault
+     * @dev This function claims rewards for this contract, swaps them to the base asset using the SwapContract,
+     *      and deposits the resulting assets into the Morpho vault. The increased vault shares benefit the
+     *      strategy's totalAssets which flows through CDO accounting to the Junior tranche.
      * @param tokens Array of reward token addresses to claim
      * @param amounts Array of cumulative amounts earned (from Merkle tree)
      * @param proofs Array of Merkle proofs for each claim
@@ -288,7 +387,7 @@ contract MorphoStrategy is Strategy {
      * @param zeroForOnes Array of swap directions for each token
      * @param minAmountsOut Array of minimum base asset amounts expected from each swap (slippage protection)
      * @param deadline Timestamp after which the swaps will revert
-     * @return totalAssetReceived Total base asset received from all swaps
+     * @return totalAssetReceived Total base asset received from all swaps and deposited to vault
      */
     function claimRewards(
         address[] calldata tokens,
@@ -345,7 +444,30 @@ contract MorphoStrategy is Strategy {
             emit RewardsClaimed(rewardToken, rewardBalance, assetReceived);
         }
 
+        // Handle vesting - vestedUSDC is kept as USDC in the strategy contract
+        // This benefits the Junior tranche through the CDO accounting mechanism
+        if (totalAssetReceived > 0) {
+            // Update vesting state - this will transfer newly vested amounts to junior vault
+            // using the USDC currently in the strategy contract from this claim
+            _updateVesting();
+
+            // Track the new reward deposit as vested USDC (stays as USDC in strategy, not in vault)
+            vestedUSDC += totalAssetReceived;
+        }
+
         return totalAssetReceived;
+    }
+
+    /**
+     * @notice Sets the vesting duration for reward deposits
+     * @param vestingDuration_ The duration in seconds over which rewards vest (decrease to 0)
+     */
+    function setVestingDuration(uint256 vestingDuration_) external onlyRole(UPDATER_STRAT_CONFIG_ROLE) {
+        // Update vesting state before changing duration
+        _updateVesting();
+
+        vestingDuration = vestingDuration_;
+        emit VestingDurationUpdated(vestingDuration_);
     }
 }
 
