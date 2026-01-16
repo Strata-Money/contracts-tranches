@@ -13,7 +13,7 @@ import {ISwapContract} from "../../interfaces/ISwapContract.sol";
 import {Strategy} from "../../Strategy.sol";
 
 contract MorphoStrategy is Strategy {
-    IERC4626 public immutable vault;
+    IERC4626 public immutable morphoVault;
     IERC20 public immutable asset;
 
     IERC20Cooldown public erc20Cooldown;
@@ -46,7 +46,7 @@ contract MorphoStrategy is Strategy {
     event VestingDurationUpdated(uint256 newDuration);
 
     constructor(IERC4626 vault_) {
-        vault = vault_;
+        morphoVault = vault_;
         asset = IERC20(vault_.asset());
     }
 
@@ -60,7 +60,7 @@ contract MorphoStrategy is Strategy {
         cdo = cdo_;
         erc20Cooldown = erc20Cooldown_;
 
-        SafeERC20.forceApprove(vault, address(erc20Cooldown), type(uint256).max);
+        SafeERC20.forceApprove(morphoVault, address(erc20Cooldown), type(uint256).max);
 
         // Initialize vesting state
         lastVestingUpdate = block.timestamp;
@@ -86,11 +86,11 @@ contract MorphoStrategy is Strategy {
         SafeERC20.safeTransferFrom(IERC20(token), owner, address(this), tokenAmount);
 
         if (token == address(asset)) {
-            SafeERC20.forceApprove(asset, address(vault), tokenAmount);
-            vault.deposit(tokenAmount, address(this));
+            SafeERC20.forceApprove(asset, address(morphoVault), tokenAmount);
+            morphoVault.deposit(tokenAmount, address(this));
             return tokenAmount;
         }
-        if (token == address(vault)) {
+        if (token == address(morphoVault)) {
             // already transferred in ↑
             return baseAssets;
         }
@@ -143,16 +143,16 @@ contract MorphoStrategy is Strategy {
         address receiver,
         bool shouldSkipCooldown
     ) internal returns (uint256) {
-        uint256 shares = vault.previewWithdraw(baseAssets);
-        if (token == address(vault)) {
+        uint256 shares = morphoVault.previewWithdraw(baseAssets);
+        if (token == address(morphoVault)) {
             uint256 cooldownSeconds =
                 shouldSkipCooldown ? 0 : (cdo.isJrt(tranche) ? vaultCooldownJrt : vaultCooldownSrt);
-            erc20Cooldown.transfer(vault, sender, receiver, shares, cooldownSeconds);
+            erc20Cooldown.transfer(morphoVault, sender, receiver, shares, cooldownSeconds);
             return shares;
         }
         if (token == address(asset)) {
             // Morpho allows direct withdrawal - no cooldown needed
-            vault.withdraw(baseAssets, receiver, address(this));
+            morphoVault.withdraw(baseAssets, receiver, address(this));
             return baseAssets;
         }
         revert UnsupportedToken(token);
@@ -169,13 +169,13 @@ contract MorphoStrategy is Strategy {
      * @param receiver The address that will receive the withdrawn tokens
      */
     function reduceReserve(address token, uint256 tokenAmount, address receiver) external onlyCDO {
-        if (token == address(vault)) {
-            erc20Cooldown.transfer(vault, receiver, receiver, tokenAmount, 0);
+        if (token == address(morphoVault)) {
+            erc20Cooldown.transfer(morphoVault, receiver, receiver, tokenAmount, 0);
             return;
         }
         if (token == address(asset)) {
             // Direct withdrawal from Morpho vault
-            vault.withdraw(tokenAmount, receiver, address(this));
+            morphoVault.withdraw(tokenAmount, receiver, address(this));
             return;
         }
         revert UnsupportedToken(token);
@@ -258,8 +258,8 @@ contract MorphoStrategy is Strategy {
      * @return baseAssets The total amount of base asset managed by this strategy
      */
     function totalAssets() external view returns (uint256 baseAssets) {
-        uint256 shares = vault.balanceOf(address(this));
-        baseAssets = vault.previewRedeem(shares);
+        uint256 shares = morphoVault.balanceOf(address(this));
+        baseAssets = morphoVault.previewRedeem(shares);
 
         // Add USDC balance in strategy contract (where vestedUSDC is held)
         uint256 usdcBalance = asset.balanceOf(address(this));
@@ -291,10 +291,10 @@ contract MorphoStrategy is Strategy {
         view
         returns (uint256)
     {
-        if (token == address(vault)) {
+        if (token == address(morphoVault)) {
             return rounding == Math.Rounding.Floor
-                ? vault.previewRedeem(tokenAmount)  // aka convertToAssets(tokenAmount)
-                : vault.previewMint(tokenAmount);
+                ? morphoVault.previewRedeem(tokenAmount)  // aka convertToAssets(tokenAmount)
+                : morphoVault.previewMint(tokenAmount);
         }
         if (token == address(asset)) {
             return tokenAmount;
@@ -317,10 +317,10 @@ contract MorphoStrategy is Strategy {
         view
         returns (uint256)
     {
-        if (token == address(vault)) {
+        if (token == address(morphoVault)) {
             return rounding == Math.Rounding.Floor
-                ? vault.previewDeposit(baseAssets)  // aka convertToShares(baseAssets)
-                : vault.previewWithdraw(baseAssets);
+                ? morphoVault.previewDeposit(baseAssets)  // aka convertToShares(baseAssets)
+                : morphoVault.previewWithdraw(baseAssets);
         }
         if (token == address(asset)) {
             return baseAssets;
@@ -333,7 +333,7 @@ contract MorphoStrategy is Strategy {
      */
     function getSupportedTokens() external view returns (IERC20[] memory) {
         IERC20[] memory tokens = new IERC20[](2);
-        tokens[0] = IERC20(address(vault));
+        tokens[0] = IERC20(address(morphoVault));
         tokens[1] = asset;
         return tokens;
     }
@@ -353,7 +353,7 @@ contract MorphoStrategy is Strategy {
         vaultCooldownSrt = vaultCooldownSrt_;
 
         bool isDisabled = vaultCooldownJrt_ == 0 && vaultCooldownSrt_ == 0;
-        erc20Cooldown.setCooldownDisabled(vault, isDisabled);
+        erc20Cooldown.setCooldownDisabled(morphoVault, isDisabled);
         emit CooldownsChanged(vaultCooldownJrt_, vaultCooldownSrt_);
     }
 
