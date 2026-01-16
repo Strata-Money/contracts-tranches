@@ -25,6 +25,8 @@ import {ITranche} from "../contracts/tranches/interfaces/ITranche.sol";
 import {IStrataCDO} from "../contracts/tranches/interfaces/IStrataCDO.sol";
 import {IAprPairFeed} from "../contracts/tranches/interfaces/IAprPairFeed.sol";
 import {IERC20Cooldown} from "../contracts/tranches/interfaces/cooldown/ICooldown.sol";
+import {IDistributor, MerkleTree} from "../contracts/tranches/interfaces/IDistributor.sol";
+import {ISwapContract} from "../contracts/tranches/interfaces/ISwapContract.sol";
 
 contract SmokehouseDeploy is Test {
     // Mainnet addresses
@@ -51,6 +53,10 @@ contract SmokehouseDeploy is Test {
     bytes32 constant CDO_OWNER_ROLE = keccak256("CDO_OWNER_ROLE");
     bytes32 constant COOLDOWN_WORKER_ROLE = keccak256("COOLDOWN_WORKER_ROLE");
 
+    // Mock contracts for strategy constructor
+    MockDistributor internal mockDistributor;
+    MockSwapContract internal mockSwapContract;
+
     // Deployed contracts
     address internal owner;
     AccessControlManager internal acm;
@@ -76,6 +82,10 @@ contract SmokehouseDeploy is Test {
         vm.label(USDC, "USDC");
 
         vm.deal(owner, 100 ether);
+
+        // Deploy mock contracts for strategy constructor
+        mockDistributor = new MockDistributor();
+        mockSwapContract = new MockSwapContract();
     }
 
     function testDeploySmokehouseStackMatchesScript() public {
@@ -89,7 +99,7 @@ contract SmokehouseDeploy is Test {
         assertEq(srtVault.asset(), USDC);
 
         // Verify strategy configuration
-        assertEq(address(strategy.vault()), SMOKEHOUSE_USDC);
+        assertEq(address(strategy.morphoVault()), SMOKEHOUSE_USDC);
         assertEq(address(strategy.asset()), USDC);
         assertEq(strategy.vaultCooldownJrt(), 7 days);
         assertEq(strategy.vaultCooldownSrt(), 0);
@@ -174,7 +184,12 @@ contract SmokehouseDeploy is Test {
         vm.label(address(erc20Cooldown), "ERC20Cooldown");
 
         // 5. Deploy MorphoStrategy (uses Smokehouse vault)
-        MorphoStrategy strategyImpl = new MorphoStrategy(IERC4626(SMOKEHOUSE_USDC));
+        MorphoStrategy strategyImpl = new MorphoStrategy(
+            IERC4626(SMOKEHOUSE_USDC),
+            IDistributor(address(mockDistributor)),
+            ISwapContract(address(mockSwapContract)),
+            30 days // vestingDuration
+        );
         vm.label(address(strategyImpl), "MorphoStrategy_Impl");
         strategy = MorphoStrategy(
             address(
@@ -290,5 +305,129 @@ contract SmokehouseDeploy is Test {
     function _grantRole(bytes32 role, address grantee) internal {
         acm.grantRole(role, grantee);
     }
+}
+
+// Mock Distributor
+contract MockDistributor is IDistributor {
+    function claim(address[] calldata, address[] calldata, uint256[] calldata, bytes32[][] calldata)
+        external
+        override
+    {}
+
+    function claimWithRecipient(
+        address[] calldata,
+        address[] calldata,
+        uint256[] calldata,
+        bytes32[][] calldata,
+        address[] calldata,
+        bytes[] memory
+    ) external override {}
+
+    // Minimal implementation for interface compliance
+    function tree() external pure override returns (bytes32, bytes32) {
+        return (bytes32(0), bytes32(0));
+    }
+
+    function lastTree() external pure override returns (bytes32, bytes32) {
+        return (bytes32(0), bytes32(0));
+    }
+
+    function disputeToken() external pure override returns (IERC20) {
+        return IERC20(address(0));
+    }
+
+    function disputer() external pure override returns (address) {
+        return address(0);
+    }
+
+    function endOfDisputePeriod() external pure override returns (uint48) {
+        return 0;
+    }
+
+    function disputePeriod() external pure override returns (uint48) {
+        return 0;
+    }
+
+    function disputeAmount() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function claimed(address, address) external pure override returns (uint208, uint48, bytes32) {
+        return (0, 0, bytes32(0));
+    }
+
+    function canUpdateMerkleRoot(address) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function operators(address, address) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function upgradeabilityDeactivated() external pure override returns (uint128) {
+        return 0;
+    }
+
+    function claimRecipient(address, address) external pure override returns (address) {
+        return address(0);
+    }
+
+    function mainOperators(address, address) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function CALLBACK_SUCCESS() external pure override returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function getMerkleRoot() external pure override returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function getEpochDuration() external pure override returns (uint32) {
+        return 0;
+    }
+
+    function toggleOperator(address, address) external override {}
+
+    function setClaimRecipient(address, address) external override {}
+
+    function toggleMainOperatorStatus(address, address) external override {}
+
+    function disputeTree(string memory) external override {}
+
+    function updateTree(MerkleTree calldata _tree) external override {}
+
+    function toggleTrusted(address) external override {}
+
+    function revokeUpgradeability() external override {}
+
+    function setEpochDuration(uint32) external override {}
+
+    function resolveDispute(bool) external override {}
+
+    function revokeTree() external override {}
+
+    function recoverERC20(address, address, uint256) external override {}
+
+    function setDisputePeriod(uint48) external override {}
+
+    function setDisputeToken(IERC20) external override {}
+
+    function setDisputeAmount(uint256) external override {}
+}
+
+// Mock SwapContract
+contract MockSwapContract is ISwapContract {
+    function swapWithEncodedKey(bytes calldata, bool, uint128, uint128, uint256, bytes calldata)
+        external
+        pure
+        override
+        returns (uint256)
+    {
+        return 0;
+    }
+
+    function approveTokenWithPermit2(address, uint160, uint48) external override {}
 }
 

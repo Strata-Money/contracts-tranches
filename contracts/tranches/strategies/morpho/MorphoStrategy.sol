@@ -45,9 +45,12 @@ contract MorphoStrategy is Strategy {
     event SwapContractUpdated(address indexed swapContract);
     event VestingDurationUpdated(uint256 newDuration);
 
-    constructor(IERC4626 vault_) {
+    constructor(IERC4626 vault_, IDistributor distributor_, ISwapContract swapContract_, uint256 vestingDuration_) {
         morphoVault = vault_;
         asset = IERC20(vault_.asset());
+        distributor = distributor_;
+        swapContract = swapContract_;
+        vestingDuration = vestingDuration_;
     }
 
     function initialize(address owner_, address acm_, IStrataCDO cdo_, IERC20Cooldown erc20Cooldown_)

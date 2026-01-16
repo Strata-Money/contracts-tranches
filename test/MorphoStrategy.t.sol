@@ -1,9 +1,10 @@
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.28;
 
 import {Test} from "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC4626} from "@openzeppelin/contracts/interfaces/IERC4626.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 import {MockERC4626} from "../contracts/test/MockERC4626.sol";
@@ -27,6 +28,8 @@ import {CooldownBase} from "../contracts/tranches/base/cooldown/CooldownBase.sol
 import {ITranche} from "../contracts/tranches/interfaces/ITranche.sol";
 import {IStrategy} from "../contracts/tranches/interfaces/IStrategy.sol";
 import {IAccounting} from "../contracts/tranches/interfaces/IAccounting.sol";
+import {IDistributor, MerkleTree} from "../contracts/tranches/interfaces/IDistributor.sol";
+import {ISwapContract} from "../contracts/tranches/interfaces/ISwapContract.sol";
 
 // Mock USDC token
 contract MockUSDC is ERC20 {
@@ -54,6 +57,130 @@ contract MockAprPairProvider is IStrategyAprPairProvider {
         aprTarget = _aprTarget;
         aprBase = _aprBase;
     }
+}
+
+// Mock Distributor
+contract MockDistributor is IDistributor {
+    function claim(address[] calldata, address[] calldata, uint256[] calldata, bytes32[][] calldata)
+        external
+        override
+    {}
+
+    function claimWithRecipient(
+        address[] calldata,
+        address[] calldata,
+        uint256[] calldata,
+        bytes32[][] calldata,
+        address[] calldata,
+        bytes[] memory
+    ) external override {}
+
+    // Minimal implementation for interface compliance
+    function tree() external pure override returns (bytes32, bytes32) {
+        return (bytes32(0), bytes32(0));
+    }
+
+    function lastTree() external pure override returns (bytes32, bytes32) {
+        return (bytes32(0), bytes32(0));
+    }
+
+    function disputeToken() external pure override returns (IERC20) {
+        return IERC20(address(0));
+    }
+
+    function disputer() external pure override returns (address) {
+        return address(0);
+    }
+
+    function endOfDisputePeriod() external pure override returns (uint48) {
+        return 0;
+    }
+
+    function disputePeriod() external pure override returns (uint48) {
+        return 0;
+    }
+
+    function disputeAmount() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function claimed(address, address) external pure override returns (uint208, uint48, bytes32) {
+        return (0, 0, bytes32(0));
+    }
+
+    function canUpdateMerkleRoot(address) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function operators(address, address) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function upgradeabilityDeactivated() external pure override returns (uint128) {
+        return 0;
+    }
+
+    function claimRecipient(address, address) external pure override returns (address) {
+        return address(0);
+    }
+
+    function mainOperators(address, address) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function CALLBACK_SUCCESS() external pure override returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function getMerkleRoot() external pure override returns (bytes32) {
+        return bytes32(0);
+    }
+
+    function getEpochDuration() external pure override returns (uint32) {
+        return 0;
+    }
+
+    function toggleOperator(address, address) external override {}
+
+    function setClaimRecipient(address, address) external override {}
+
+    function toggleMainOperatorStatus(address, address) external override {}
+
+    function disputeTree(string memory) external override {}
+
+    function updateTree(MerkleTree calldata _tree) external override {}
+
+    function toggleTrusted(address) external override {}
+
+    function revokeUpgradeability() external override {}
+
+    function setEpochDuration(uint32) external override {}
+
+    function resolveDispute(bool) external override {}
+
+    function revokeTree() external override {}
+
+    function recoverERC20(address, address, uint256) external override {}
+
+    function setDisputePeriod(uint48) external override {}
+
+    function setDisputeToken(IERC20) external override {}
+
+    function setDisputeAmount(uint256) external override {}
+}
+
+// Mock SwapContract
+contract MockSwapContract is ISwapContract {
+    function swapWithEncodedKey(bytes calldata, bool, uint128, uint128, uint256, bytes calldata)
+        external
+        pure
+        override
+        returns (uint256)
+    {
+        return 0;
+    }
+
+    function approveTokenWithPermit2(address, uint160, uint48) external override {}
 }
 
 contract MorphoStrategyTest is Test {
@@ -149,11 +276,23 @@ contract MorphoStrategyTest is Test {
             )
         );
 
+        // Prepare mocks for strategy constructor
+        MockDistributor mockDistributor = new MockDistributor();
+        MockSwapContract mockSwapContract = new MockSwapContract();
+        uint256 vestingDuration = 30 days;
+
         // Prepare Strategy
         morphoStrategy = MorphoStrategy(
             address(
                 new ERC1967Proxy(
-                    address(new MorphoStrategy(IERC4626(address(morphoVault)))),
+                    address(
+                        new MorphoStrategy(
+                            IERC4626(address(morphoVault)),
+                            IDistributor(address(mockDistributor)),
+                            ISwapContract(address(mockSwapContract)),
+                            vestingDuration
+                        )
+                    ),
                     abi.encodeWithSelector(
                         MorphoStrategy.initialize.selector, owner, address(acm), address(cdo), address(erc20Cooldown)
                     )
