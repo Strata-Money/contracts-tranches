@@ -11,7 +11,7 @@ import {MockERC4626} from "../contracts/test/MockERC4626.sol";
 import {Tranche} from "../contracts/tranches/Tranche.sol";
 import {Accounting} from "../contracts/tranches/Accounting.sol";
 
-import {SteakhouseUSDC} from "../contracts/tranches/strategies/morpho/SteakhouseUSDC.sol";
+import {MorphoStrategy} from "../contracts/tranches/strategies/morpho/MorphoStrategy.sol";
 import {AccessControlManager} from "../contracts/governance/AccessControlManager.sol";
 
 import {AprPairFeed} from "../contracts/tranches/oracles/AprPairFeed.sol";
@@ -56,10 +56,10 @@ contract MockAprPairProvider is IStrategyAprPairProvider {
     }
 }
 
-contract SteakhouseUSDCTest is Test {
+contract MorphoStrategyTest is Test {
     // External protocols
     MockUSDC public USDC;
-    MockERC4626 public steakhouseUSD;
+    MockERC4626 public morphoVault;
 
     // Auth
     AccessControlManager public acm;
@@ -79,7 +79,7 @@ contract SteakhouseUSDCTest is Test {
     MockAprPairProvider public aprProvider;
 
     // Strategy
-    SteakhouseUSDC public steakhouseStrategy;
+    MorphoStrategy public morphoStrategy;
     ERC20Cooldown public erc20Cooldown;
 
     address account;
@@ -89,9 +89,9 @@ contract SteakhouseUSDCTest is Test {
 
         vm.startPrank(owner);
 
-        // Prepare USDC and steakhouseUSD vault
+        // Prepare USDC and morpho vault
         USDC = new MockUSDC();
-        steakhouseUSD = new MockERC4626(IERC20(address(USDC)));
+        morphoVault = new MockERC4626(IERC20(address(USDC)));
 
         // Prepare Acm
         acm = new AccessControlManager(owner);
@@ -150,18 +150,18 @@ contract SteakhouseUSDCTest is Test {
         );
 
         // Prepare Strategy
-        steakhouseStrategy = SteakhouseUSDC(
+        morphoStrategy = MorphoStrategy(
             address(
                 new ERC1967Proxy(
-                    address(new SteakhouseUSDC(IERC4626(address(steakhouseUSD)))),
+                    address(new MorphoStrategy(IERC4626(address(morphoVault)))),
                     abi.encodeWithSelector(
-                        SteakhouseUSDC.initialize.selector, owner, address(acm), address(cdo), address(erc20Cooldown)
+                        MorphoStrategy.initialize.selector, owner, address(acm), address(cdo), address(erc20Cooldown)
                     )
                 )
             )
         );
-        acm.grantRole(erc20Cooldown.COOLDOWN_WORKER_ROLE(), address(steakhouseStrategy));
-        acm.grantRole(steakhouseStrategy.UPDATER_STRAT_CONFIG_ROLE(), owner);
+        acm.grantRole(erc20Cooldown.COOLDOWN_WORKER_ROLE(), address(morphoStrategy));
+        acm.grantRole(morphoStrategy.UPDATER_STRAT_CONFIG_ROLE(), owner);
 
         // Prepare Feed
         aprProvider = new MockAprPairProvider();
@@ -175,7 +175,7 @@ contract SteakhouseUSDCTest is Test {
                         address(acm),
                         IStrategyAprPairProvider(address(aprProvider)),
                         4 hours,
-                        "Steakhouse CDO APR Pair"
+                        "Morpho CDO APR Pair"
                     )
                 )
             )
@@ -196,7 +196,7 @@ contract SteakhouseUSDCTest is Test {
         // Configure CDO
         cdo.configure(
             IAccounting(address(accounting)),
-            IStrategy(address(steakhouseStrategy)),
+            IStrategy(address(morphoStrategy)),
             ITranche(address(jrtVault)),
             ITranche(address(srtVault))
         );
@@ -216,7 +216,7 @@ contract SteakhouseUSDCTest is Test {
 
         // Set cooldown periods (7 days for both tranches)
         uint256 cooldownPeriod = 7 days;
-        steakhouseStrategy.setCooldowns(cooldownPeriod, cooldownPeriod);
+        morphoStrategy.setCooldowns(cooldownPeriod, cooldownPeriod);
 
         // test deposit
         uint256 shares = 1000 * 10 ** USDC.decimals(); // 1000 USDC
@@ -232,7 +232,7 @@ contract SteakhouseUSDCTest is Test {
         assertBalance(USDC, account, 0, "Cooldown period failed");
 
         vm.warp(block.timestamp + 7 days);
-        erc20Cooldown.finalize(steakhouseUSD, account);
+        erc20Cooldown.finalize(morphoVault, account);
         assertBalance(USDC, account, shares, "After-Cooldown period failed");
 
         vm.stopPrank();
