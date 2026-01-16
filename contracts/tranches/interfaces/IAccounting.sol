@@ -21,6 +21,7 @@ interface IAccounting is ICDOComponent, IAprPairFeedListener {
     function accrueFee(bool isJrt, uint256 amount) external;
 
     function maxWithdraw(bool isJrt) external view returns (uint256);
+    function maxWithdraw(bool isJrt, bool ownerIsSharesCooldown) external view returns (uint256);
     function maxDeposit(bool isJrt) external view returns (uint256);
 
 }

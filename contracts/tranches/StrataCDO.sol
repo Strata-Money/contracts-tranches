@@ -17,6 +17,8 @@ import { IStrategy } from "./interfaces/IStrategy.sol";
 import { IStrataCDO, IStrataCDOSetters } from "./interfaces/IStrataCDO.sol";
 import { TActionState } from "./structs/TActionState.sol";
 import { IAccounting } from "./interfaces/IAccounting.sol";
+import { ISharesCooldown } from "./interfaces/cooldown/ISharesCooldown.sol";
+
 
 /// @notice Core CDO contract that orchestrates Tranches, Accounting, and Strategy
 /// @dev Manages deposits, withdrawals, and asset distribution between tranches
@@ -59,6 +61,8 @@ contract StrataCDO is IErrors, IStrataCDO, IStrataCDOSetters, AccessControlled {
     /// @dev Withdrawal fees for the Senior Tranche
     uint256 public exitFeeSrt;
 
+    ISharesCooldown public sharesCooldown;
+
     event DepositsStateChanged(address indexed tranche, bool enabled);
     event WithdrawalsStateChanged(address indexed tranche, bool enabled);
     event ReserveReduced(address token, uint256 amount);
@@ -67,6 +71,7 @@ contract StrataCDO is IErrors, IStrataCDO, IStrataCDOSetters, AccessControlled {
     event ShortfallPaused();
     event JrtShortfallPausePriceSet(uint256 pricePerShare);
     event ExitFeesSet(uint256 jrt, uint256 srt);
+    event SharesCooldownSet(address sharesCooldown);
 
 
     /// @notice Restricts function access to only the junior (JRT) or senior (SRT) tranche contracts
@@ -126,27 +131,49 @@ contract StrataCDO is IErrors, IStrataCDO, IStrataCDOSetters, AccessControlled {
         return accounting.maxDeposit(isJrt_);
     }
     function maxWithdraw(address tranche) external view returns (uint256) {
+        return maxWithdraw(tranche, address(0));
+    }
+
+    function maxWithdraw(address tranche, address owner) public view returns (uint256) {
         bool isJrt_ = isJrt(tranche);
         bool isWithdrawEnabled = isJrt_ ? actionsJrt.isWithdrawEnabled : actionsSrt.isWithdrawEnabled;
         if (isWithdrawEnabled == false) {
             return 0;
         }
-        return accounting.maxWithdraw(isJrt_);
+        bool ownerIsSharesCooldown = owner != address(0) && owner == address(sharesCooldown);
+        return accounting.maxWithdraw(isJrt_, ownerIsSharesCooldown);
     }
 
-    /// @notice Calculates the exit fee for a withdrawal from a specific tranche.
-    /// @dev The calculation can be based on either the gross withdrawal amount (before fees)
-    ///      or the net amount a user wishes to receive (after fees).
+    /// @notice Determines the exit mode and associated parameters for a withdrawal from a specific tranche.
+    /// @dev Checks if shares cooldown is configured and calculates exit parameters based on coverage ratio.
+    ///      If the owner is the shares cooldown contract, returns ERC4626 mode with no fees.
+    ///      Otherwise, returns either SharesLock mode (if cooldown required) or Fee mode with applicable fees.
     /// @param tranche The address of the tranche (junior or senior).
-    /// @param amount The amount to calculate the fee on.
-    /// @param isGross If true, `amount` is the gross withdrawal amount.
-    ///                If false, `amount` is the net amount to be received.
-    /// @return The calculated exit fee amount.
-    function calculateExitFee (address tranche, uint256 amount, bool isGross) external view returns (uint256) {
-        uint256 fee = isJrt(tranche) ? exitFeeJrt : exitFeeSrt;
-        return isGross
-            ? Math.mulDiv(amount, fee, 1e18, Math.Rounding.Floor)
-            : Math.mulDiv(amount, fee, 1e18 - fee, Math.Rounding.Floor);
+    /// @param owner The shares owner. No fee or cooldown is applied when the shares cooldown contract redeems.
+    /// @return mode The exit mode (ERC4626, SharesLock, or Fee).
+    /// @return fee The exit fee in 18 decimals (0 if no fee applies).
+    /// @return cooldownSeconds The cooldown period in seconds (0 if no cooldown applies).
+    function calculateExitMode (address tranche, address owner) external view returns (TExitMode mode, uint256 fee, uint32 cooldownSeconds) {
+        if (address(sharesCooldown) != address(0)) {
+            if (owner == address(sharesCooldown)) {
+                return (TExitMode.ERC4626, 0, 0);
+            }
+            uint32 cov = coverage();
+            ISharesCooldown.TExitParams memory exit = sharesCooldown.calculateExitParams(tranche, cov);
+            if (exit.feePpm > 0) {
+                // Convert to 18 decimals
+                fee = uint256(exit.feePpm) * 1e18 / 1e6;
+            }
+            if (exit.sharesLock > 0) {
+                return (TExitMode.SharesLock, fee, exit.sharesLock);
+            }
+        }
+        if (fee == 0) {
+            // default
+            bool isJrt_ = isJrt(tranche);
+            fee = isJrt_ ? exitFeeJrt : exitFeeSrt;
+        }
+        return (TExitMode.Fee, fee, 0);
     }
 
     /// @notice On behalf of a tranche, moves accrued fees from the tranche's TVL to the reserve.
@@ -156,6 +183,33 @@ contract StrataCDO is IErrors, IStrataCDO, IStrataCDOSetters, AccessControlled {
         accounting.accrueFee(isJrt(tranche), assets);
     }
 
+    /// @notice Returns tranche NAVs excluding assets locked in the shares cooldown (silo).
+    /// @dev Reads accounting totals and subtracts locked assets to compute available TVLs and coverage.
+    function totalAssetsUnlocked() public view returns (uint256 jrtNav, uint256 srtNav) {
+        (jrtNav, srtNav, ) = accounting.totalAssetsT0();
+
+        uint256 jrtNavLocked = jrtVault.convertToAssets(jrtVault.balanceOf(address(sharesCooldown)));
+        uint256 srtNavLocked = srtVault.convertToAssets(srtVault.balanceOf(address(sharesCooldown)));
+
+        jrtNav = jrtNav > jrtNavLocked ? jrtNav - jrtNavLocked : 0;
+        srtNav = srtNav > srtNavLocked ? srtNav - srtNavLocked : 0;
+        return (jrtNav, srtNav);
+    }
+
+    /// @notice Returns the coverage ratio using available TVLs (assets not locked in the silo).
+    /// @dev Uses totals from totalAssetsUnlocked() so locked assets do not affect coverage.
+    function coverage () public view returns (uint32) {
+        (uint256 jrtNav, uint256 srtNav) = totalAssetsUnlocked();
+        if (srtNav == 0) {
+            return type(uint32).max;
+        }
+        uint256 coverage_ = jrtNav * 1e6 / srtNav;
+        return coverage_ > type(uint32).max ? type(uint32).max : uint32(coverage_);
+    }
+
+
+    /// @notice Refreshes accounting state before tranche deposit or redemption flows.
+    /// @dev Called by tranche contracts to sync balances with current strategy TVL.
     function updateAccounting () external onlyTranche {
         uint256 totalAssetsOverall = strategy.totalAssets();
         accounting.updateAccounting(totalAssetsOverall);
@@ -181,22 +235,48 @@ contract StrataCDO is IErrors, IStrataCDO, IStrataCDOSetters, AccessControlled {
     }
 
     function withdraw(address tranche, address token, uint256 tokenAmount, uint256 baseAssets, address sender, address receiver) external onlyTranche nonReentrant {
+        if (tokenAmount == 0 || baseAssets == 0) {
+            revert ZeroAmount();
+        }
         bool isJrt_ = isJrt(tranche);
         bool enabled = isJrt_ ? actionsJrt.isWithdrawEnabled : actionsSrt.isWithdrawEnabled;
         if (!enabled) {
             revert WithdrawalsDisabled(tranche);
         }
-        if (baseAssets > accounting.maxWithdraw(isJrt_)) {
+        bool isSharesLockup = sender == address(sharesCooldown);
+        if (baseAssets > accounting.maxWithdraw(isJrt_, isSharesLockup)) {
             revert WithdrawalCapReached(tranche);
         }
-        if (tokenAmount == 0 || baseAssets == 0) {
-            revert ZeroAmount();
-        }
-        strategy.withdraw(tranche, token, tokenAmount, baseAssets, sender, receiver);
+        // When the sender is the shares lockup contract, we should skip any cooldown on our side,
+        // unless the underlying protocol has some cooldown/unstake process.
+        bool shouldSkipCooldown = isSharesLockup == true;
+        strategy.withdraw(tranche, token, tokenAmount, baseAssets, sender, receiver, shouldSkipCooldown);
         uint256 jrtAssetsOut = isJrt_ ? baseAssets : 0;
         uint256 srtAssetsOut = isJrt_ ? 0          : baseAssets;
         accounting.updateBalanceFlow(0, jrtAssetsOut, 0, srtAssetsOut);
         shortfallPauser();
+    }
+
+    /// @notice Initiates a cooldown period for share redemption by transferring shares to the cooldown contract.
+    /// @dev Validates withdrawal permissions and delegates to the sharesCooldown contract to handle the lock-up.
+    ///      The shares are held in escrow during the cooldown period before they can be redeemed for assets.
+    ///      The caller MUST transfer the required shares to the shares cooldown contract before calling this function.
+    /// @param tranche The address of the tranche (junior or senior).
+    /// @param shares The amount of shares to lock for cooldown.
+    /// @param sender The address initiating the cooldown (original share owner).
+    /// @param receiver The address that will receive the assets after cooldown completes.
+    /// @param fee The exit fee to be applied when redeeming (in 18 decimals).
+    /// @param cooldownSeconds The duration of the cooldown period in seconds.
+    function cooldownShares(address tranche, uint256 shares, address sender, address receiver, uint256 fee, uint32 cooldownSeconds) external onlyTranche nonReentrant {
+        if (shares == 0) {
+            revert ZeroAmount();
+        }
+        bool isJrt_ = isJrt(tranche);
+        bool enabled = isJrt_ ? actionsJrt.isWithdrawEnabled : actionsSrt.isWithdrawEnabled;
+        if (!enabled) {
+            revert WithdrawalsDisabled(tranche);
+        }
+        sharesCooldown.requestRedeem(ITranche(tranche), sender, receiver, shares, fee, cooldownSeconds);
     }
 
     /// @notice Determines if the given address is the Junior (BB) Tranche
@@ -307,6 +387,13 @@ contract StrataCDO is IErrors, IStrataCDO, IStrataCDOSetters, AccessControlled {
         require(jrtShortfallPausePrice_ <= pricePerShare(address(jrtVault)), "ShortfallPriceTooLarge");
         jrtShortfallPausePrice = jrtShortfallPausePrice_;
         emit JrtShortfallPausePriceSet(jrtShortfallPausePrice_);
+    }
+
+    /// @notice Sets the shares cooldown contract address
+    /// @param sharesCooldown_ The new shares cooldown contract address
+    function setSharesCooldown (ISharesCooldown sharesCooldown_) external onlyOwner {
+        sharesCooldown = sharesCooldown_;
+        emit SharesCooldownSet(address(sharesCooldown_));
     }
 
     function shortfallPauser () internal {

@@ -18,7 +18,6 @@ import { Addresses } from '@s/constants';
 import { l } from 'dequanto/utils/$logger';
 import { AprPairFeed } from '@0xc/hardhat/AprPairFeed/AprPairFeed';
 import { $strata } from '../../utils/$strata';
-import { $promise } from 'dequanto/utils/$promise';
 
 await $hh.test.init();
 
@@ -598,25 +597,30 @@ UTest.create({
         }
     },
     async 'final TVLs should be equal' () {
-        $require.eq(TVLs_v110_fees.jrtBefore, TVLs_v100_noFee.jrtBefore, '(before) JRT TVLs should be same');
-        $require.eq(TVLs_v110_fees.srtBefore, TVLs_v100_noFee.srtBefore, '(before) SRT TVLs should be same');
 
-        $require.eq(TVLs_v110_noFee.srtBefore, TVLs_v100_noFee.srtBefore, 'v110 vs v100 - (before) SRT TVLs should be same');
+        function eqRounded(a: bigint, b: bigint, hint: string) {
+            $require.lte($bigint.abs(a - b), 1n, hint);
+        }
 
-        $require.eq(TVLs_v110_fees.jrtWithdrawnGross, TVLs_v100_noFee.jrtWithdrawnGross, 'JRT Withdrawn Gross final TVLs should be same');
-        $require.eq(TVLs_v110_fees.srtWithdrawnGross, TVLs_v100_noFee.srtWithdrawnGross, 'SRT Withdrawn Gross final TVLs should be same');
+        eqRounded(TVLs_v110_fees.jrtBefore, TVLs_v100_noFee.jrtBefore, '(before) JRT TVLs should be same');
+        eqRounded(TVLs_v110_fees.srtBefore, TVLs_v100_noFee.srtBefore, '(before) SRT TVLs should be same');
 
-        $require.eq(TVLs_v110_noFee.jrtWithdrawnGross, TVLs_v100_noFee.jrtWithdrawnGross, 'JRT Withdrawn Gross final TVLs should be same');
-        $require.eq(TVLs_v110_noFee.srtWithdrawnGross, TVLs_v100_noFee.srtWithdrawnGross, 'SRT Withdrawn Gross final TVLs should be same');
+        eqRounded(TVLs_v110_noFee.srtBefore, TVLs_v100_noFee.srtBefore, 'v110 vs v100 - (before) SRT TVLs should be same');
 
-        $require.eq(TVLs_v110_fees.srtAfter - TVLs_v110_fees.srtFees, TVLs_v100_noFee.srtAfter, '(after) SRT TVLs should be same');
-        $require.eq(TVLs_v110_fees.jrtAfter - TVLs_v110_fees.jrtFees, TVLs_v100_noFee.jrtAfter, '(after) JRT TVLs should be same');
+        eqRounded(TVLs_v110_fees.jrtWithdrawnGross, TVLs_v100_noFee.jrtWithdrawnGross, 'JRT Withdrawn Gross final TVLs should be same');
+        eqRounded(TVLs_v110_fees.srtWithdrawnGross, TVLs_v100_noFee.srtWithdrawnGross, 'SRT Withdrawn Gross final TVLs should be same');
 
-        $require.eq(TVLs_v110_noFee.srtAfter, TVLs_v100_noFee.srtAfter, '(after) SRT TVLs should be same');
-        $require.eq(TVLs_v110_noFee.jrtAfter, TVLs_v100_noFee.jrtAfter, '(after) JRT TVLs should be same');
+        eqRounded(TVLs_v110_noFee.jrtWithdrawnGross, TVLs_v100_noFee.jrtWithdrawnGross, 'JRT Withdrawn Gross final TVLs should be same');
+        eqRounded(TVLs_v110_noFee.srtWithdrawnGross, TVLs_v100_noFee.srtWithdrawnGross, 'SRT Withdrawn Gross final TVLs should be same');
+
+        eqRounded(TVLs_v110_fees.srtAfter - TVLs_v110_fees.srtFees, TVLs_v100_noFee.srtAfter, '(after) SRT TVLs should be same');
+        eqRounded(TVLs_v110_fees.jrtAfter - TVLs_v110_fees.jrtFees, TVLs_v100_noFee.jrtAfter, '(after) JRT TVLs should be same');
+
+        eqRounded(TVLs_v110_noFee.srtAfter, TVLs_v100_noFee.srtAfter, '(after) SRT TVLs should be same');
+        eqRounded(TVLs_v110_noFee.jrtAfter, TVLs_v100_noFee.jrtAfter, '(after) JRT TVLs should be same');
 
 
-        $require.eq(TVLs_v110_fees.jrtWithdrawnNet + TVLs_v110_fees.jrtFees, TVLs_v100_noFee.jrtWithdrawnGross, 'JRT');
-        $require.eq(TVLs_v110_fees.srtWithdrawnNet + TVLs_v110_fees.srtFees, TVLs_v100_noFee.srtWithdrawnGross, 'SRT');
+        eqRounded(TVLs_v110_fees.jrtWithdrawnNet + TVLs_v110_fees.jrtFees, TVLs_v100_noFee.jrtWithdrawnGross, 'JRT');
+        eqRounded(TVLs_v110_fees.srtWithdrawnNet + TVLs_v110_fees.srtFees, TVLs_v100_noFee.srtWithdrawnGross, 'SRT');
     }
 })

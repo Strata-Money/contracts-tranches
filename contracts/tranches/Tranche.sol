@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { IERC20Metadata } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IERC4626 } from "@openzeppelin/contracts/interfaces/IERC4626.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { ERC20Upgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
@@ -10,15 +11,25 @@ import { ERC4626Upgradeable } from "@openzeppelin/contracts-upgradeable/token/ER
 import { ERC20PermitUpgradeable } from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
 import { IStrataCDO }  from "./interfaces/IStrataCDO.sol";
 import { IStrategy } from "./interfaces/IStrategy.sol";
+import { ITranche } from "./interfaces/ITranche.sol";
 import { CDOComponent }  from "./base/CDOComponent.sol";
 
-contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
+contract Tranche is ITranche, CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
 
     /// @notice Minimum non-zero shares amount to prevent donation attack
     uint256 private constant MIN_SHARES = 0.1 ether;
 
     event OnMetaDeposit(address indexed owner, address indexed token, uint256 tokenAssets, uint256 shares);
     event OnMetaWithdraw(address indexed owner, address indexed token, uint256 tokenAssets, uint256 shares);
+    event OnExit(
+        address indexed owner,
+        address indexed token,
+        uint256 tokenAssets,
+        uint256 shares,
+        IStrataCDO.TExitMode exitMode,
+        uint256 exitFee,
+        uint32 cooldownSeconds
+    );
 
     function initialize(
         address owner_,
@@ -38,11 +49,11 @@ contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
 
 
     /// @return uint256 The total assets for this tranche
-    function totalAssets() public view override returns (uint256) {
+    function totalAssets() public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
         return cdo.totalAssets(address(this));
     }
 
-    function decimals() public view override(ERC20Upgradeable, ERC4626Upgradeable) returns (uint8) {
+    function decimals() public view override(ERC20Upgradeable, ERC4626Upgradeable, IERC20Metadata) returns (uint8) {
         return super.decimals();
     }
 
@@ -53,12 +64,12 @@ contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
      */
 
     /** @dev Extends {IERC4626-maxDeposit} to handle the paused state and the TVL ratio */
-    function maxDeposit(address owner) public view override returns (uint256) {
+    function maxDeposit(address) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
         return cdo.maxDeposit(address(this));
     }
 
     /** @dev Extends {IERC4626-maxMint} to handle the paused state and the TVL ratio */
-    function maxMint(address owner) public view override returns (uint256) {
+    function maxMint(address) public view override(ERC4626Upgradeable, IERC4626) returns (uint256) {
         uint256 assets = cdo.maxDeposit(address(this));
         if (assets == type(uint256).max) {
             // No mint-cap
@@ -68,29 +79,38 @@ contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
     }
 
     /** @dev Extends {IERC4626-maxWithdraw} to handle the paused state and the TVL ratio */
-    function maxWithdraw(address owner) public view override returns (uint256 assetsNet) {
+    function maxWithdraw(address owner) public view override(ERC4626Upgradeable, IERC4626) returns (uint256 assetsNet) {
         uint256 sharesGross = balanceOf(owner);
-        assetsNet = Math.min(previewRedeem(sharesGross), cdo.maxWithdraw(address(this)));
+        assetsNet = Math.min(previewRedeem(sharesGross), cdo.maxWithdraw(address(this), owner));
     }
 
     /** @dev Extends {IERC4626-maxRedeem} to handle the paused state and the TVL ratio */
-    function maxRedeem(address owner) public view override returns (uint256 sharesGross) {
-        uint256 assetsProtocolMax = cdo.maxWithdraw(address(this));
+    function maxRedeem(address owner) public view override(ERC4626Upgradeable, IERC4626) returns (uint256 sharesGross) {
+        uint256 assetsProtocolMax = cdo.maxWithdraw(address(this), owner);
         uint256 sharesProtocolMax = convertToShares(assetsProtocolMax);
         sharesGross = Math.min(super.maxRedeem(owner), sharesProtocolMax);
     }
 
     /** @dev Extends {IERC4626-previewRedeem} to handle fee calculation */
-    function previewRedeem(uint256 sharesGross) public view override returns (uint256 assetsNet) {
-        uint256 fee = cdo.calculateExitFee(address(this), sharesGross, true);
-        assetsNet = super.previewRedeem(sharesGross - fee);
+    function previewRedeem(uint256 sharesGross) public view override(ERC4626Upgradeable, IERC4626) returns (uint256 assetsNet) {
+        (, uint256 fee, ) = cdo.calculateExitMode(address(this), address(0));
+        assetsNet = quoteRedeem(sharesGross, fee);
+    }
+    function quoteRedeem(uint256 sharesGross, uint256 fee) public view returns (uint256 assetsNet) {
+        uint256 sharesFee = fee > 0 ? calculateExitFee(sharesGross, fee, /*isGross*/true) : 0;
+        assetsNet = super.previewRedeem(sharesGross - sharesFee);
     }
 
     /** @dev Extends {IERC4626-previewWithdraw} to handle fee calculation */
-    function previewWithdraw(uint256 assetsNet) public view override returns (uint256 sharesGross) {
+    function previewWithdraw(uint256 assetsNet) public view override(ERC4626Upgradeable, IERC4626) returns (uint256 sharesGross) {
+        (, uint256 exitFee, ) = cdo.calculateExitMode(address(this), address(0));
+        sharesGross = quoteWithdraw(assetsNet, exitFee);
+    }
+
+    function quoteWithdraw(uint256 assetsNet, uint256 fee) public view returns (uint256 sharesGross) {
         uint256 sharesNet = super.previewWithdraw(assetsNet);
-        uint256 fee = cdo.calculateExitFee(address(this), sharesNet, false);
-        sharesGross = sharesNet + fee;
+        uint256 sharesFee = fee > 0 ? calculateExitFee(sharesNet, fee, /*isGross*/false) : 0;
+        sharesGross = sharesNet + sharesFee;
     }
 
     /**
@@ -148,7 +168,7 @@ contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
      */
 
     /** @dev See {IERC4626-deposit}. */
-    function deposit(uint256 tokenAssets, address receiver) public override returns (uint256) {
+    function deposit(uint256 tokenAssets, address receiver) public override(ERC4626Upgradeable, IERC4626) returns (uint256) {
         cdo.updateAccounting();
         uint256 shares = super.deposit(tokenAssets, receiver);
         return shares;
@@ -165,7 +185,7 @@ contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
         return shares;
     }
     /** @dev See {IERC4626-mint}. */
-    function mint(uint256 shares, address receiver) public override returns (uint256) {
+    function mint(uint256 shares, address receiver) public override(ERC4626Upgradeable, IERC4626) returns (uint256) {
         cdo.updateAccounting();
         uint256 assets = super.mint(shares, receiver);
         return assets;
@@ -214,78 +234,54 @@ contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
      */
 
     /** @dev See {IERC4626-withdraw}. */
-    function withdraw(uint256 assets, address receiver, address owner) public override returns (uint256) {
-        cdo.updateAccounting();
-        uint256 shares = super.withdraw(assets, receiver, owner);
-        return shares;
+    function withdraw(uint256 assets, address receiver, address owner) public override(ERC4626Upgradeable, IERC4626) returns (uint256) {
+        return withdraw(asset(), assets, receiver, owner);
     }
     function withdraw(address token, uint256 tokenAmount, address receiver, address owner) public virtual returns (uint256) {
-        if (token == asset()) {
-            return withdraw(tokenAmount, receiver, owner);
-        }
+        return withdraw(token, tokenAmount, receiver, owner, TRedemptionParams(IStrataCDO.TExitMode.Dynamic, 0, 0));
+    }
+    function withdraw(address token, uint256 tokenAmount, address receiver, address owner, TRedemptionParams memory params) public virtual returns (uint256) {
         cdo.updateAccounting();
+        (IStrataCDO.TExitMode exitMode, uint256 exitFee, uint32 cooldownSec) = cdo.calculateExitMode(address(this), owner);
+        validateRedemptionParams(params, exitMode, exitFee, cooldownSec);
+
         // {Optimistic path} Reverts if token is not supported
         uint256 baseAssets = cdo.strategy().convertToAssets(token, tokenAmount, Math.Rounding.Floor);
         uint256 maxAssets = maxWithdraw(owner);
         if (baseAssets > maxAssets) {
             revert ERC4626ExceededMaxWithdraw(owner, baseAssets, maxAssets);
         }
-        uint256 shares = previewWithdraw(baseAssets);
-        _withdraw(token, _msgSender(), receiver, owner, baseAssets, tokenAmount, shares);
+        uint256 shares = quoteWithdraw(baseAssets, exitFee);
+        _withdraw(token, _msgSender(), receiver, owner, baseAssets, tokenAmount, shares, exitMode, exitFee, cooldownSec);
         return shares;
     }
 
     /** @dev See {IERC4626-redeem}. */
-    function redeem(uint256 shares, address receiver, address owner) public override returns (uint256) {
-        cdo.updateAccounting();
-        uint256 assets = super.redeem(shares, receiver, owner);
-        return assets;
+    function redeem(uint256 shares, address receiver, address owner) public override(ERC4626Upgradeable, IERC4626)  returns (uint256) {
+        return redeem(asset(), shares, receiver, owner);
     }
     function redeem(address token, uint256 shares, address receiver, address owner) public virtual returns (uint256) {
-        if (token == asset()) {
-            return redeem(shares, receiver, owner);
-        }
+        return redeem(token, shares, receiver, owner, TRedemptionParams(IStrataCDO.TExitMode.Dynamic, 0, 0));
+    }
+    function redeem(address token, uint256 shares, address receiver, address owner, TRedemptionParams memory params) public virtual returns (uint256) {
         cdo.updateAccounting();
         uint256 maxShares = maxRedeem(owner);
         if (shares > maxShares) {
             revert ERC4626ExceededMaxRedeem(owner, shares, maxShares);
         }
 
-        uint256 baseAssets = previewRedeem(shares);
+        (IStrataCDO.TExitMode exitMode, uint256 exitFee, uint32 cooldownSec) = cdo.calculateExitMode(address(this), owner);
+        validateRedemptionParams(params, exitMode, exitFee, cooldownSec);
+
+        uint256 baseAssets = quoteRedeem(shares, exitFee);
         // {Optimistic path} Reverts if token is not supported
         uint256 tokenAssets = cdo.strategy().convertToTokens(token, baseAssets, Math.Rounding.Ceil);
-        _withdraw(token, _msgSender(), receiver, owner, baseAssets, tokenAssets, shares);
+        _withdraw(token, _msgSender(), receiver, owner, baseAssets, tokenAssets, shares, exitMode, exitFee, cooldownSec);
         return tokenAssets;
     }
 
     /**
-     * @dev Withdraw/redeem common workflow for base token
-     * assets ~ net
-     * shares ~ gross
-     */
-    function _withdraw(
-        address caller,
-        address receiver,
-        address owner,
-        uint256 assetsNet,
-        uint256 sharesGross
-    ) internal override {
-        if (caller != owner) {
-            _spendAllowance(owner, caller, sharesGross);
-        }
-        uint256 assetsGross = convertToAssets(sharesGross);
-        uint256 fee = Math.saturatingSub(assetsGross, assetsNet);
-
-        _burn(owner, sharesGross);
-        cdo.accrueFee(address(this), fee);
-        cdo.withdraw(address(this), asset(), assetsNet, assetsNet, owner, receiver);
-
-        _onAfterWithdrawalChecks();
-        emit Withdraw(caller, receiver, owner, assetsNet, sharesGross);
-    }
-
-    /**
-     * @dev Withdraw/redeem common workflow for meta token
+     * @dev Withdraw/redeem common workflow for base and meta tokens
      */
     function _withdraw(
         address token,
@@ -294,11 +290,23 @@ contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
         address owner,
         uint256 baseAssets,
         uint256 tokenAssets,
-        uint256 sharesGross
+        uint256 sharesGross,
+        IStrataCDO.TExitMode exitMode,
+        uint256 exitFee,
+        uint32 cooldownSec
     ) internal virtual {
         if (caller != owner) {
             _spendAllowance(owner, caller, sharesGross);
         }
+
+        emit OnExit(receiver, token, tokenAssets, sharesGross, exitMode, exitFee, cooldownSec);
+
+        if (exitMode == IStrataCDO.TExitMode.SharesLock) {
+            _transfer(owner, address(cdo.sharesCooldown()), sharesGross);
+            cdo.cooldownShares(address(this), sharesGross, owner, receiver, exitFee, cooldownSec);
+            return;
+        }
+
         uint256 baseAssetsGross = convertToAssets(sharesGross);
         uint256 fee = Math.saturatingSub(baseAssetsGross, baseAssets);
 
@@ -308,6 +316,33 @@ contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
         _onAfterWithdrawalChecks();
         emit Withdraw(caller, receiver, owner, baseAssets, sharesGross);
         emit OnMetaWithdraw(receiver, token, tokenAssets, sharesGross);
+    }
+
+    /**
+     * ============================================
+     *        Fee methods
+     * ============================================
+     */
+
+    /// @notice Burns shares as fee without withdrawing assets. Permissionless but typically called by SharesCooldown
+    ///         to accrue fees on the redeemable portion during cooldown process.
+    /// @param shares The amount of shares to burn as fee
+    /// @param owner The owner of the shares to burn
+    /// @return assets The base assets accounted as fee
+    function burnSharesAsFee(uint256 shares, address owner) external returns (uint256 assets) {
+        address caller = _msgSender();
+        if (caller != owner) {
+            _spendAllowance(owner, caller, shares);
+        }
+        uint256 maxShares = maxRedeem(owner);
+        if (shares > maxShares) {
+            revert ERC4626ExceededMaxRedeem(owner, shares, maxShares);
+        }
+
+        assets = convertToAssets(shares);
+        _burn(owner, shares);
+        cdo.accrueFee(address(this), assets);
+        _onAfterWithdrawalChecks();
     }
 
     /**
@@ -336,6 +371,32 @@ contract Tranche is CDOComponent, ERC4626Upgradeable, ERC20PermitUpgradeable {
     function _onAfterWithdrawalChecks () internal view {
         if (totalSupply() < MIN_SHARES) {
             revert MinSharesViolation();
+        }
+    }
+
+    /// @dev The calculation can be based on either the gross withdrawal amount (before fees)
+    ///      or the net amount a user wishes to receive (after fees).
+    /// @param amount The amount to calculate the fee on.
+    /// @param isGross If true, `amount` is the gross withdrawal amount.
+    ///                If false, `amount` is the net amount to be received.
+    /// @return The calculated exit fee amount
+    function calculateExitFee (uint256 amount, uint256 fee, bool isGross) internal pure returns (uint256) {
+        return isGross
+            ? Math.mulDiv(amount, fee, 1e18, Math.Rounding.Floor)
+            : Math.mulDiv(amount, fee, 1e18 - fee, Math.Rounding.Floor);
+    }
+
+
+    function validateRedemptionParams(TRedemptionParams memory params, IStrataCDO.TExitMode exitMode, uint256 exitFee, uint32 cooldownSec) internal pure {
+        if (params.exitMode == IStrataCDO.TExitMode.Dynamic) {
+            return;
+        }
+        if (params.exitMode != exitMode || params.exitFee != exitFee || params.cooldownSeconds != cooldownSec) {
+            revert RedemptionParamsMismatch(params, TRedemptionParams({
+                exitMode: exitMode,
+                exitFee: exitFee,
+                cooldownSeconds: cooldownSec
+            }));
         }
     }
 }

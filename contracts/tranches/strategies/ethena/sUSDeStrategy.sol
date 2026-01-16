@@ -90,9 +90,17 @@ contract sUSDeStrategy is Strategy {
      * @return The amount of tokens withdrawn (shares for sUSDe, baseAssets for USDe)
      */
     function withdraw (address tranche, address token, uint256 tokenAmount, uint256 baseAssets, address sender, address receiver) external onlyCDO returns (uint256) {
+        return withdrawInner(tranche, token, tokenAmount, baseAssets, sender, receiver, false);
+    }
+
+    function withdraw (address tranche, address token, uint256 tokenAmount, uint256 baseAssets, address sender, address receiver, bool shouldSkipCooldown) external onlyCDO returns (uint256) {
+        return withdrawInner(tranche, token, tokenAmount, baseAssets, sender, receiver, shouldSkipCooldown);
+    }
+
+    function withdrawInner (address tranche, address token, uint256 tokenAmount, uint256 baseAssets, address sender, address receiver, bool shouldSkipCooldown) internal returns (uint256) {
         uint256 shares = sUSDe.previewWithdraw(baseAssets);
         if (token == address(sUSDe)) {
-            uint256 cooldownSeconds = cdo.isJrt (tranche) ? sUSDeCooldownJrt : sUSDeCooldownSrt;
+            uint256 cooldownSeconds = shouldSkipCooldown ? 0 : (cdo.isJrt (tranche) ? sUSDeCooldownJrt : sUSDeCooldownSrt);
             erc20Cooldown.transfer(sUSDe, sender, receiver, shares, cooldownSeconds);
             return shares;
         }

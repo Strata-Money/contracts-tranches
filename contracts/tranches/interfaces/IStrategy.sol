@@ -9,6 +9,7 @@ interface IStrategy is ICDOComponent {
 
     function deposit (address tranche, address token, uint256 tokenAmount, uint256 baseAssets, address owner) external returns (uint256);
     function withdraw (address tranche, address token, uint256 tokenAmount, uint256 baseAssets, address sender, address receiver) external returns (uint256);
+    function withdraw (address tranche, address token, uint256 tokenAmount, uint256 baseAssets, address sender, address receiver, bool shouldSkipCooldown) external returns (uint256);
     function totalAssets () external view returns (uint256);
     function reduceReserve (address token, uint256 tokenAmount, address receiver) external;
 

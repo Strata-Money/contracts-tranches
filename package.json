@@ -11,6 +11,7 @@
     "compile": "hardhat compile",
     "coverage": "hardhat clean && atma --max-old-space-size=12000 test --coverage",
     "coverage-nocompile": "atma --max-old-space-size=12000 test --coverage --no-compile",
+    "coverage-server": "cd coverage/report && npx atma server",
     "deploy-local": "atma act tasks/deploy.act.ts -q \"deploy and configure\" --chain hardhat",
     "fork-eth": "hardhat node --verbose --show-stack-traces --fork %MAINNET_RPC_URL%"
   },

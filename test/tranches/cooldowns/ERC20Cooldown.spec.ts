@@ -82,7 +82,7 @@ UAction.create({
 
         await transfer(erc20Cooldown, USDe, alice, bob.address, 21n, '7days');
 
-        let result = await $promise.caught(() => $testCooldown.finalize(erc20Cooldown, USDe, bob.address));
+        let result = await $promise.caught($testCooldown.finalize(erc20Cooldown, USDe, bob.address));
         $require.match(/NothingToFinalize/, result.error?.message);
 
         await erc20Cooldown.$receipt().setCooldownDisabled(alice, USDe.address, true);

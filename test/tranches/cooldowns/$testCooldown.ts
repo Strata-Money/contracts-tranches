@@ -4,16 +4,18 @@ import { $acc } from '../utils/$acc';
 import { $date } from 'dequanto/utils/$date';
 import { $require } from 'dequanto/utils/$require';
 import { $hh } from '../utils/$hh';
+import { ISharesCooldown } from '@0xc/hardhat/ISharesCooldown/ISharesCooldown';
 
 export namespace $testCooldown {
 
 
-    export async function finalize (cooldown: ICooldown, token: ERC20 | any, to: $acc.Address) {
-        await cooldown.$receipt().finalize($hh.test.deployer,  token.address, $acc.toAddress(to));
+    export async function finalize (cooldown: Pick<ICooldown, 'finalize'>, token: ERC20 | any, to: $acc.Address) {
+        let tx = await cooldown.finalize($hh.test.deployer,  token.address, $acc.toAddress(to));
+        return await tx.wait();
     }
 
 
-    export async function eqBalanceOf(cooldown: ICooldown, token: ERC20 | any, account: $acc.Address, amounts: {
+    export async function eqBalanceOf(cooldown: ICooldown | ISharesCooldown, token: ERC20 | any, account: $acc.Address, amounts: {
         pending?: bigint,
         claimable?: bigint
         nextUnlockAmount?: bigint

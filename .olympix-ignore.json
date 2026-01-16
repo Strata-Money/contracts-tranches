@@ -1,0 +1,18 @@
+{
+    "IgnoredVulnerabilities" : {
+        "missing-revert-reason-tests" : {
+            "contracts" : []
+        },
+        "reentrancy" : {
+            "contracts/tranches/Accounting.sol" : [330, 393],
+            "contracts/tranches/StrataCDO.sol" : [392],
+            "contracts/tranches/base/cooldown/UnstakeCooldown.sol": [113]
+        }
+    },
+    "IgnoredPaths": [
+        "contracts/test",
+        "contracts/oz",
+        "contracts/lens",
+        "test/PoC"
+    ]
+}

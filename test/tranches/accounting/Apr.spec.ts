@@ -64,7 +64,7 @@ UTest.create({
             ]
         });
     },
-    async '!drastically change the APR due to TVL ratio' () {
+    async 'drastically change the APR due to TVL ratio' () {
         let exec = new ProtocolExecutor($hh.test);
 
         await exec.run({

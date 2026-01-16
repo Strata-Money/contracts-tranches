@@ -166,6 +166,15 @@ contract Accounting is IAccounting, CDOComponent {
     }
 
     function maxWithdraw(bool isJrt) external view returns (uint256) {
+        return maxWithdrawInner(isJrt, false);
+    }
+    function maxWithdraw(bool isJrt, bool ownerIsSharesCooldown) external view returns (uint256) {
+        return maxWithdrawInner(isJrt, ownerIsSharesCooldown);
+    }
+    function maxWithdrawInner(bool isJrt, bool ownerIsSharesCooldown) internal view returns (uint256) {
+        if (ownerIsSharesCooldown) {
+            return isJrt ? jrtNav : srtNav;
+        }
         if (isJrt) {
             uint256 minJrt = srtNav * minimumJrtSrtRatio / 1e18;
             return Math.saturatingSub(jrtNav, minJrt);

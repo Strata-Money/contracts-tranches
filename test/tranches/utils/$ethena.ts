@@ -4,6 +4,7 @@ import { TEth } from 'dequanto/models/TEth';
 import { ERC20 } from 'dequanto/prebuilt/openzeppelin/ERC20';
 import { $bigint } from 'dequanto/utils/$bigint';
 import { l } from 'dequanto/utils/$logger';
+import { $require } from 'dequanto/utils/$require';
 
 export namespace $ethena {
     export async function distribute (sUSDe: MockStakedUSDe | any, USDe: ERC20 | any, distributor: TEth.IAccount,  amount: number | bigint) {
@@ -19,5 +20,10 @@ export namespace $ethena {
         }
         l`Distributing yellow<${amount}>`;
         await sUSDe.$receipt().transferInRewards(distributor, amountWei);
+    }
+
+    export async function setCooldownDuration (sUSDe: MockStakedUSDe, sender: TEth.IAccount, seconds: number) {
+        $require.eq(sUSDe.client.platform, 'hardhat');
+        await sUSDe.$receipt().setCooldownDuration(sender, seconds);
     }
 }
