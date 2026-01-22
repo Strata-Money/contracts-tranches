@@ -10,3 +10,6 @@
 [submodule "lib/chimera"]
 	path = lib/chimera
 	url = https://github.com/recon-fuzz/chimera
+[submodule "lib/lz-address-book"]
+	path = lib/lz-address-book
+	url = https://github.com/LayerZero-Labs/lz-address-book
