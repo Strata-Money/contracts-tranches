@@ -1,6 +1,16 @@
 {
     "recon.foundryConfigPath": "foundry.toml",
     "recon.defaultFuzzer": "medusa",
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+        "**/CVS": true,
+        "**/.ruby-lsp": true,
+        "**/lib": true
+    },
     "security.olympix.detectors.arbitraryAddressSpoofingAttack": true,
     "security.olympix.detectors.arbitraryTransferFrom": true,
     "security.olympix.detectors.noAccessControlPayableFallback": true,

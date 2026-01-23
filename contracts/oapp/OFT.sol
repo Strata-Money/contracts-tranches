@@ -19,4 +19,11 @@ contract StrataOFT is OFT {
         OFT(_name, _symbol, _lzEndpoint, _owner)
         Ownable(_owner)
     {}
+
+    /// @notice Mint tokens to a specified address (only owner)
+    /// @param _to The address to mint tokens to
+    /// @param _amount The amount of tokens to mint
+    function mint(address _to, uint256 _amount) external onlyOwner {
+        _mint(_to, _amount);
+    }
 }
