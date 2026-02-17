@@ -41,7 +41,7 @@ contract Accounting is IAccounting, CDOComponent {
 
     uint256 public reserveBps;
     uint256 constant PERCENTAGE_100 = 1e18;
-    uint256 constant RESERVE_BPS_MAX = 0.02e18;
+    uint256 constant RESERVE_BPS_MAX = 0.1e18;
 
     /// @dev Latest balances at T0 (latest protocol interrogation)
     uint256 public nav;

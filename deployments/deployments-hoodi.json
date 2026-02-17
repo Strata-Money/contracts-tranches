@@ -324,15 +324,15 @@
     "id": "USDeAccounting",
     "name": "Accounting",
     "main": "./0xc/hardhat/Accounting/Accounting.ts",
-    "bytecodeHash": "0x9eb5e75a33fb56260c3e8d60a0c7fcc90f40a10be74054202693a29595015147",
+    "bytecodeHash": "0xc565ea0186977860faee4925e207e0112cdb10367d0f034383e7a1f5cb801c25",
     "address": "0xA757CE8f55C592008B908A996470Bbfd8875A65d",
-    "block": 1525481,
-    "tx": "0xaf8b31809916c3aa0f3138f4925979177567958fae6da4066365ed42ba6a8b20",
-    "gas": "2305181",
+    "block": 2256098,
+    "tx": "0xd8aa35f8e5332a40644e2faaad757d3c338d346d3d33e80708bf5fb5e5436e17",
+    "gas": "2507791",
     "deployer": "0xB878F43161E20AD229896c830ff478Db95a2dBb5",
-    "timestamp": 1761910871,
-    "implementation": "0x1d1224cc81F0221319E5E5e2CfEEd54Ddb50Bc80",
-    "verified": "2025-10-31T11:41:24.803Z",
+    "timestamp": 1771368793,
+    "implementation": "0xB68DCB285924dF1620F8EC46746bc892F9168869",
+    "verified": "2026-02-17T22:53:26.692Z",
     "history": [
       {
         "main": "./0xc/hardhat/Accounting/Accounting.ts",
@@ -349,6 +349,14 @@
         "tx": "0x19766b466339c31a62a4dbbbe5a0e29cd41d18d2a6aa6aa1941be98d86e7bf6b",
         "gas": "2315328",
         "verified": "2025-10-06T10:47:11.149Z"
+      },
+      {
+        "main": "./0xc/hardhat/Accounting/Accounting.ts",
+        "address": "0x1d1224cc81F0221319E5E5e2CfEEd54Ddb50Bc80",
+        "block": 1525481,
+        "tx": "0xaf8b31809916c3aa0f3138f4925979177567958fae6da4066365ed42ba6a8b20",
+        "gas": "2305181",
+        "verified": "2025-10-31T11:41:24.803Z"
       }
     ]
   },
@@ -363,7 +371,7 @@
     "gas": "857408",
     "deployer": "0xB878F43161E20AD229896c830ff478Db95a2dBb5",
     "timestamp": 1759260085,
-    "proxyFor": "0x1d1224cc81F0221319E5E5e2CfEEd54Ddb50Bc80",
+    "proxyFor": "0xB68DCB285924dF1620F8EC46746bc892F9168869",
     "verified": "2025-09-30T19:59:21.064Z"
   },
   {

@@ -17,7 +17,7 @@ export namespace PlatformFactory {
     }) {
         const hh = new HardhatProvider();
         const config = await Config.fetch({
-            configGlobal: './config/dequanto.yml',
+            configGlobal: './config/*.yml',
         });
         const platform = config.$get('chain') ?? 'hardhat';
         const client = await Web3ClientFactory.getAsync(platform);

@@ -62,7 +62,8 @@ export class TranchesDeployments {
         this.ds = new Deployments(params.client, params.deployer, {
             directory: './deployments/',
             whenBytecodeChanged: params.deployments ?? (this.isTestnet() ? null : 'throw'),
-            fork: params.client.forked?.platform
+            whenUpgradeRequired: 'ignore',
+            fork: params.client.forked?.platform,
         });
 
         let info = JSON.parse(JSON.stringify(Tranches.ethena)) as typeof Tranches.ethena;
@@ -447,16 +448,19 @@ export class TranchesDeployments {
         return output;
     }
 
-    async ensureAccounting(cdo: TEth.Address) {
+    async ensureAccounting(cdo: TEth.Address, feedAddress?: TEth.Address) {
         const acm = await this.ensureACM();
-        const { feed } = await this.ensureFeeds();
+        if (!feedAddress) {
+            const { feed } = await this.ensureFeeds();
+            feedAddress = feed.address;
+        }
         const { contract: accounting } = await this.ds.ensureWithProxy(Accounting, {
             id: `USDeAccounting`,
             initialize: [
                 this.owner.address,
                 acm.address,
                 cdo,
-                feed.address,
+                feedAddress,
             ]
         });
         return accounting;
