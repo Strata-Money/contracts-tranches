@@ -13,7 +13,6 @@ import {SharesCooldown} from "../../contracts/tranches/base/cooldown/SharesCoold
 import {CooldownBase} from "../../contracts/tranches/base/cooldown/CooldownBase.sol";
 import {IStrataCDO} from "../../contracts/tranches/interfaces/IStrataCDO.sol";
 import {ITranche} from "../../contracts/tranches/interfaces/ITranche.sol";
-import {ISharesCooldown} from "../../contracts/tranches/interfaces/cooldown/ISharesCooldown.sol";
 
 /**
  * @title SIP2Test - Shares Cooldown Exit Mode Tests
